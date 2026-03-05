@@ -1,0 +1,5 @@
+node_modules/
+build/
+*.js.map
+cowork-data.json
+.DS_Store

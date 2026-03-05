@@ -1,0 +1,75 @@
+# COWORK Protocol Configuration
+# These are opinionated defaults. Override what you disagree with.
+# Every default here is a position on how human-agent collaboration should work.
+
+trust:
+  # New agents start at low trust. They earn autonomy.
+  default_level: 0.3
+
+  # After 20 approved actions (>80% approval rate), auto-promote trust
+  auto_promote_after: 20
+  auto_promote_threshold: 0.8
+
+  # 3 consecutive overrides = trust demotion
+  auto_demote_after: 3
+
+  # Trust decays 1% per day without activity (use it or lose it)
+  decay_per_day: 0.01
+
+authority:
+  # Agents SUGGEST by default. They never act directly without earning trust.
+  default_mode: "suggest"   # suggest | review | act
+
+  # Max actions per hour before automatic pause
+  volume_cap: 50
+
+  # Fields that ALWAYS require human approval, regardless of trust level
+  high_risk_fields:
+    - "deal_stage"
+    - "owner"
+    - "commission"
+    - "utm_*"
+    - "billing_*"
+    - "password"
+    - "permissions"
+
+handoff:
+  # Handoffs include structured context, not just transcripts
+  context_format: "structured"
+
+  # Agent must explain why it's escalating
+  include_reasoning: true
+
+  # Agent must state its confidence level
+  include_confidence: true
+
+  # Agent must list what it already tried
+  include_attempted: true
+
+  # Max seconds to wait for human response before timeout
+  handoff_timeout: 3600
+
+feedback:
+  # Humans MUST give a reason when overriding (not just click reject)
+  override_requires_reason: true
+
+  # Structured reason categories
+  reason_types:
+    - "agent_wrong"        # Agent made a factual/logical error
+    - "human_preference"   # Agent was technically correct but human prefers different approach
+    - "missing_context"    # Agent didn't have enough information
+    - "policy_change"      # Rules changed, agent's knowledge is outdated
+    - "edge_case"          # Unusual situation agent wasn't designed for
+
+  # Implicit approval: if human doesn't override within this many seconds, treat as approved
+  implicit_approval_seconds: 86400  # 24 hours
+
+storage:
+  # Default: local JSON file. Zero setup. Inspect with any text editor.
+  driver: "json"
+  path: "./cowork-data.json"
+
+  # Future options (uncomment to use):
+  # driver: "turso"
+  # url: "libsql://your-db.turso.io"
+  # token: "your-token"
