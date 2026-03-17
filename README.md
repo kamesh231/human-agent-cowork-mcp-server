@@ -68,6 +68,168 @@ claude mcp add cowork node /path/to/mcp-server/build/index.js
 
 Local JSON file by default. Your data stays on your machine. Inspect with any text editor.
 
+---
+
+## COWORK Sentry — AI Flight Recorder
+
+### The "Shadow AI" Problem
+
+Standard AI agents often operate in a "Black Box." They call tools, modify databases, and read files without leaving a clear trail of **why** they took those actions. In a production environment, this is a governance nightmare.
+
+### The COWORK Sentry Solution
+
+`cowork-sentry` is a high-performance security proxy that sits between your AI (the MCP Client) and your Tools (the MCP Server). It enforces **Action Attribution** by requiring every tool call to be accompanied by a human-readable intent.
+
+```
+MCP Client (Claude, Cursor, etc.)
+        |
+        v
+  +-----------------+
+  | cowork-sentry   |  <-- Intercepts tools/call
+  |                 |      Requires intent string
+  |  SQLite Audit   |      Sanitizes args
+  |  Hash Chain     |      Logs trace
+  +-----------------+
+        |
+        v
+  Downstream MCP Server
+  (postgres, filesystem, git, etc.)
+```
+
+### Core Security Features
+
+- **Immutable Audit Log**: Every action is recorded in a local SQLite database.
+- **Tamper-Evident Hash Chain**: Each log entry is cryptographically linked to the previous one. If a single row is modified manually, the chain breaks and the Sentry alerts you.
+- **PII Sanitization**: Automatically redacts sensitive patterns (keys, tokens, passwords) from the logs before they hit the disk. Also scrubs known secret formats (AWS keys, JWTs, Stripe keys, etc.) even in innocently named fields.
+- **UI-Resilient Proxying**: Automatically "unpacks" stringified JSON-in-JSON, making it compatible with the MCP Inspector and various LLM quirks.
+
+### Quick Start
+
+Wrap any existing MCP server in one command:
+
+```bash
+cowork-sentry -- npx @modelcontextprotocol/server-postgres postgresql://localhost/mydb
+```
+
+### Installation
+
+```bash
+# Global install
+npm install -g @cowork/mcp-server
+
+# Or zero-install
+npx -p @cowork/mcp-server cowork-sentry -- npx @modelcontextprotocol/server-filesystem ./
+```
+
+### Claude Desktop Configuration
+
+```json
+{
+  "mcpServers": {
+    "cowork": {
+      "command": "cowork-mcp"
+    },
+    "my-db-with-audit": {
+      "command": "cowork-sentry",
+      "args": ["--", "npx", "@modelcontextprotocol/server-postgres", "postgresql://..."]
+    }
+  }
+}
+```
+
+### Claude Code Configuration
+
+```bash
+claude mcp add cowork cowork-mcp
+claude mcp add my-db cowork-sentry -- npx @modelcontextprotocol/server-postgres "postgresql://..."
+```
+
+### How It Works
+
+An agent sends a `tools/call` request with `_cowork_metadata`:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "read_file",
+    "arguments": {
+      "path": "/etc/config.yaml",
+      "_cowork_metadata": {
+        "intent": "Reading config to check database connection settings",
+        "agent_id": "support-bot-v2"
+      }
+    }
+  }
+}
+```
+
+The Sentry:
+1. Extracts the intent
+2. Sanitizes sensitive arguments (passwords, tokens, API keys)
+3. Logs an `ActionTrace` to SQLite (status: PENDING)
+4. Strips `_cowork_metadata` and forwards the clean call downstream
+5. Updates the trace (COMPLETED/FAILED) with duration when the response arrives
+
+### CLI Options
+
+```
+cowork-sentry [options] -- <command> [args...]
+
+Options:
+  --db <path>            SQLite audit database path     (default: ./cowork-traces.db)
+  --agent-id <id>        Default agent ID for sessions
+  --enforcement <mode>   "strict" blocks without intent, "warn" logs and forwards
+  --verify-chain         Verify hash chain integrity and exit
+  --version, -v          Print version
+  --help, -h             Show help
+```
+
+### Enforcement Modes
+
+| Mode | Missing Intent | Use Case |
+|------|---------------|----------|
+| `strict` (default) | Blocks the call with error `-32602` | Production: every action must be attributed |
+| `warn` | Logs warning, forwards anyway, records `[MISSING]` intent | Development / gradual rollout with non-COWORK agents |
+
+### Verify Audit Integrity
+
+```bash
+cowork-sentry --verify-chain --db ./cowork-traces.db
+# [cowork-sentry] Hash chain is valid.
+```
+
+### ActionTrace Schema
+
+Every intercepted tool call produces one row:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | UUID | Unique trace identifier |
+| `agent_id` | string | Session/agent identifier |
+| `intent` | string | Why the agent made this call |
+| `tool_name` | string | MCP tool name |
+| `args_json` | string | Sanitized, stringified arguments |
+| `status` | enum | PENDING, COMPLETED, or FAILED |
+| `duration_ms` | integer | Downstream call duration |
+| `prev_hash` | string | SHA-256 of previous row (tamper-evident chain) |
+| `timestamp` | ISO 8601 | When the trace was created |
+
+### Configuration
+
+Add a `sentry` section to `cowork.config.yaml`:
+
+```yaml
+sentry:
+  enabled: true
+  db_path: "./cowork-traces.db"
+  enforcement: "strict"      # or "warn"
+  sensitive_keys: []          # additional patterns on top of built-ins
+  hash_chain: true
+```
+
+---
+
 ## Part of [COWORK Protocol](https://github.com/kamesh231/cowork-protocol)
 
 MIT License

@@ -4,16 +4,29 @@
   "description": "COWORK Protocol MCP Server — Human-Agent Collaboration Primitives",
   "type": "module",
   "bin": {
-    "cowork-mcp": "./build/index.js"
+    "cowork-mcp": "./build/index.js",
+    "cowork-sentry": "./build/sentry/index.js"
   },
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js",
+    "build": "tsc && chmod 755 build/index.js build/sentry/index.js",
     "dev": "tsc --watch",
     "start": "node build/index.js",
-    "inspect": "npx @modelcontextprotocol/inspector node build/index.js"
+    "inspect": "npx @modelcontextprotocol/inspector node build/index.js",
+    "inspect:sentry": "npx @modelcontextprotocol/inspector node build/sentry/index.js -- npx -y @modelcontextprotocol/server-filesystem ./"
   },
-  "files": ["build", "cowork.config.yaml"],
-  "keywords": ["mcp", "cowork", "human-agent-collaboration", "ai-agents", "trust", "handoff", "protocol"],
+  "files": [
+    "build",
+    "cowork.config.yaml"
+  ],
+  "keywords": [
+    "mcp",
+    "cowork",
+    "human-agent-collaboration",
+    "ai-agents",
+    "trust",
+    "handoff",
+    "protocol"
+  ],
   "author": "Kamesh",
   "license": "MIT",
   "repository": {
@@ -22,10 +35,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^12.8.0",
     "yaml": "^2.7.1",
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.21",
     "typescript": "^5.8.3"
   }

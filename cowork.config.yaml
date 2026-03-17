@@ -73,3 +73,23 @@ storage:
   # driver: "turso"
   # url: "libsql://your-db.turso.io"
   # token: "your-token"
+
+sentry:
+  # Action Attribution proxy — the "AI Flight Recorder".
+  # When enabled, wraps a downstream MCP server and logs every tool call
+  # with a tamper-evident audit trail in SQLite.
+  enabled: false
+
+  # Path to the SQLite audit database.
+  db_path: "./cowork-traces.db"
+
+  # "strict" blocks tool calls without an intent string.
+  # "warn" logs a warning but forwards the call anyway.
+  enforcement: "strict"
+
+  # Additional sensitive key patterns to redact (on top of built-in patterns).
+  # Supports simple globs: "*_secret", "api_*"
+  sensitive_keys: []
+
+  # Enable SHA-256 hash chain for tamper detection.
+  hash_chain: true

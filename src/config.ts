@@ -2,6 +2,19 @@ import { readFileSync, existsSync } from "fs";
 import { parse } from "yaml";
 import { join, resolve } from "path";
 
+export interface SentryConfig {
+  /** Whether the Sentry proxy is enabled. */
+  enabled: boolean;
+  /** Path to the SQLite audit database. */
+  db_path: string;
+  /** Enforcement mode: "strict" blocks calls without intent, "warn" logs and forwards. */
+  enforcement: "strict" | "warn";
+  /** Additional key patterns to redact (on top of built-in patterns). */
+  sensitive_keys: string[];
+  /** Whether to compute and verify the SHA-256 hash chain. */
+  hash_chain: boolean;
+}
+
 export interface CoworkConfig {
   trust: {
     default_level: number;
@@ -35,6 +48,7 @@ export interface CoworkConfig {
     url?: string;
     token?: string;
   };
+  sentry: SentryConfig;
 }
 
 const DEFAULT_CONFIG: CoworkConfig = {
@@ -43,6 +57,7 @@ const DEFAULT_CONFIG: CoworkConfig = {
   handoff: { context_format: "structured", include_reasoning: true, include_confidence: true, include_attempted: true, timeout_seconds: 3600 },
   feedback: { override_requires_reason: true, reason_types: ["agent_wrong", "human_preference", "missing_context", "policy_change"], override_trust_impact: -0.05, approval_trust_impact: 0.02 },
   storage: { driver: "sqlite", path: "./cowork.db" },
+  sentry: { enabled: false, db_path: "./cowork-traces.db", enforcement: "strict", sensitive_keys: [], hash_chain: true },
 };
 
 export function loadConfig(configPath?: string): CoworkConfig {
