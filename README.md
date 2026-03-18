@@ -1,10 +1,10 @@
 # @cowork/mcp-server
-
+### **Only Action Attribution is currently built please check the file to install on Claude or via npx**
 ### Human-Agent Collaboration Primitives as an MCP Server
 
 > Give your AI agent trust, handoffs, and accountability in 5 minutes.
 
-## What This Does
+## What This Does (WIP)
 
 6 MCP tools that add collaboration primitives to any AI agent:
 
@@ -17,7 +17,7 @@
 | `cowork_override` | Override Signal | Record human corrections with structured reasons. Updates trust model |
 | `cowork_status` | Dashboard | Trust scores, override rates, pending proposals, timeline |
 
-## Quick Start
+## Quick Start (WIP)
 
 ```bash
 git clone https://github.com/kamesh231/cowork-protocol.git
@@ -70,7 +70,7 @@ Local JSON file by default. Your data stays on your machine. Inspect with any te
 
 ---
 
-## COWORK Sentry — AI Flight Recorder
+## Action Attribution — AI Flight Recorder
 
 ### The "Shadow AI" Problem
 
