@@ -52,8 +52,7 @@
 ```bash
 # Clone the repo
 git clone https://github.com/kamesh231/human-agent-cowork-mcp-server.git
-cd cowork-mcp-server
-
+cd human-agent-cowork-mcp-server
 # Install and build
 npm install
 npm run build
@@ -77,7 +76,7 @@ Edit `~/.config/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\
   "mcpServers": {
     "cowork": {
       "command": "node",
-      "args": ["/full/path/to/cowork-mcp-server/build/index.js"]
+      "args": ["/full/path/to/cd human-agent-cowork-mcp-server/build/index.js"]
     }
   }
 }
@@ -88,7 +87,7 @@ Restart Claude Desktop. You'll see "cowork" in the tools menu.
 #### Claude Code (Local)
 
 ```bash
-# From the cowork-mcp-server directory:
+# From the cd human-agent-cowork-mcp-server directory:
 claude mcp add cowork node "$(pwd)/build/index.js"
 ```
 
