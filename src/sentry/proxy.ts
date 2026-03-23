@@ -113,13 +113,15 @@ export class SentryProxy {
 
     if (!metadata?.intent) {
       if (this.enforcement === "strict") {
-        // Strict mode: block the call — no intent provided.
         this.sendErrorToClient(msg.id, COWORK_ERR_CODE, "COWORK_ERR: Action Attribution Required. Missing intent.");
         this.log(`BLOCKED tools/call "${params.name}" — missing intent (id=${msg.id})`);
         return;
       }
-      // Warn mode: log warning but forward the call anyway.
       this.log(`WARN: tools/call "${params.name}" — missing intent (id=${msg.id}), forwarding anyway`);
+    } else if (this.enforcement === "strict" && metadata.intent.trim().length < 10) {
+      this.sendErrorToClient(msg.id, COWORK_ERR_CODE, "COWORK_ERR: Intent too short. Provide a meaningful description (min 10 chars).");
+      this.log(`BLOCKED tools/call "${params.name}" — intent too short: "${metadata.intent}" (id=${msg.id})`);
+      return;
     }
 
     // --- Sanitize & log ---
@@ -235,8 +237,12 @@ export class SentryProxy {
    * Becomes: { "path": "file.txt", "_cowork_metadata": {...} }
    */
   private unpackArguments(args: Record<string, unknown>): Record<string, unknown> {
+    // Preserve top-level _cowork_metadata so unpacked strings cannot override it.
+    const originalMetadata = args._cowork_metadata;
     const unpacked: Record<string, unknown> = { ...args };
+
     for (const [key, value] of Object.entries(unpacked)) {
+      if (key === "_cowork_metadata") continue;
       if (typeof value === "string" && value.trim().startsWith("{")) {
         try {
           const parsed: unknown = JSON.parse(value);
@@ -259,6 +265,12 @@ export class SentryProxy {
         }
       }
     }
+
+    // Restore original metadata — unpacked values must never override it.
+    if (originalMetadata !== undefined) {
+      unpacked._cowork_metadata = originalMetadata;
+    }
+
     return unpacked;
   }
 

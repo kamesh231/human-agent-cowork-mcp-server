@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { TraceStore } from "./trace-store.js";
 import { SentryProxy } from "./proxy.js";
+import { loadConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // CLI Argument Parsing
@@ -53,9 +54,13 @@ function parseArgs(argv: string[]): CliArgs | null {
     process.exit(0);
   }
 
-  let dbPath = resolve("./cowork-traces.db");
+  // Load config file defaults for sentry section.
+  const config = loadConfig();
+  const sentryConfig = config.sentry;
+
+  let dbPath = resolve(sentryConfig.db_path);
   let agentId: string | undefined;
-  let enforcement: "strict" | "warn" = "strict";
+  let enforcement: "strict" | "warn" = sentryConfig.enforcement;
   let verifyChain = false;
   let downstreamCommand: string[] = [];
 
@@ -160,22 +165,29 @@ function main(): void {
     process.exit(1);
   }
 
+  // Guard against double-close (child exit + shutdown signal can race).
+  let storeClosed = false;
+  const safeCloseStore = () => {
+    if (storeClosed) return;
+    storeClosed = true;
+    try { store.close(); } catch (err) { log(`Warning: error closing database: ${err}`); }
+  };
+
   const [cmd, ...cmdArgs] = cliArgs.downstreamCommand;
   const child = spawn(cmd, cmdArgs, {
     stdio: ["pipe", "pipe", "pipe"],
-    // Inherit env so downstream servers get PATH, credentials, etc.
     env: process.env,
   });
 
   child.on("error", (err) => {
     log(`Failed to spawn downstream server: ${err.message}`);
-    store.close();
+    safeCloseStore();
     process.exit(1);
   });
 
   child.on("exit", (code, signal) => {
     log(`Downstream server exited (code=${code}, signal=${signal})`);
-    store.close();
+    safeCloseStore();
     process.exit(code ?? 1);
   });
 
@@ -192,13 +204,8 @@ function main(): void {
 
     log(`Received ${signal}, shutting down...`);
 
-    // Try to close DB first (synchronous, fast).
-    try {
-      store.close();
-      log("Audit database closed.");
-    } catch (err) {
-      log(`Warning: error closing database: ${err}`);
-    }
+    safeCloseStore();
+    log("Audit database closed.");
 
     // Send SIGTERM to child, then force-kill after timeout.
     child.kill("SIGTERM");

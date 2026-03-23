@@ -188,9 +188,10 @@ export function sanitize(
 
     // Numbers, booleans, etc. — pass through.
     return input;
-  } catch {
-    // Fail-safe: if anything unexpected happens, return the original value
-    // rather than crashing the entire proxy.
+  } catch (err) {
+    // Fail-safe: log warning and return original value rather than crashing.
+    // NOTE: This means unsanitized data may reach the audit trail on error.
+    process.stderr.write(`[cowork-sentry] WARN: Sanitizer failed, passing through unsanitized value: ${err}\n`);
     return input;
   }
 }

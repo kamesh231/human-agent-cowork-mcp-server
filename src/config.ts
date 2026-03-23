@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { parse } from "yaml";
 import { join, resolve } from "path";
+import type { AgentConfig } from "./auth.js";
 
 export interface SentryConfig {
   /** Whether the Sentry proxy is enabled. */
@@ -49,6 +50,12 @@ export interface CoworkConfig {
     token?: string;
   };
   sentry: SentryConfig;
+  /**
+   * Registered agents. When this array is non-empty the server enters
+   * "closed mode" and every tool call must supply a matching agent_token.
+   * Leave empty (or omit) for open/demo mode — all agent_ids are accepted.
+   */
+  agents?: AgentConfig[];
 }
 
 const DEFAULT_CONFIG: CoworkConfig = {

@@ -74,6 +74,24 @@ storage:
   # url: "libsql://your-db.turso.io"
   # token: "your-token"
 
+# ─── Agent Identity ──────────────────────────────────────────────────────────
+# When this section is non-empty the server enters "closed mode":
+# every tool call must include a matching agent_token field.
+# Leave commented out (or empty) for open/demo mode.
+#
+# Generating a token:
+#   node -e "const {generateToken, hashToken} = await import('./build/auth.js');
+#             const t = generateToken(); console.log('token:', t);
+#             console.log('token_hash:', hashToken(t));"
+#
+# agents:
+#   - id: "sales-agent"
+#     token: "sk-cowork-..."          # plaintext — dev/demo only
+#
+#   - id: "support-agent"
+#     token_hash: "sha256-hex-..."    # hashed — production
+#     workspace_id: "acme-corp"       # optional namespace (future multi-tenancy)
+
 sentry:
   # Action Attribution proxy — the "AI Flight Recorder".
   # When enabled, wraps a downstream MCP server and logs every tool call
