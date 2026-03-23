@@ -3,6 +3,28 @@ import { parse } from "yaml";
 import { join, resolve } from "path";
 import type { AgentConfig } from "./auth.js";
 
+export interface PolicyRuleConfig {
+  field: string;
+  constraint: "high_risk" | "readonly" | "value_range" | "enum" | "regex";
+  reason?: string;
+  min?: number;
+  max?: number;
+  values?: string[];
+  pattern?: string;
+}
+
+export interface PolicyConfig {
+  id: string;
+  description?: string;
+  rules: PolicyRuleConfig[];
+}
+
+export interface MappingConfig {
+  agent_id: string;
+  domain: string;
+  policy_id: string;
+}
+
 export interface SentryConfig {
   /** Whether the Sentry proxy is enabled. */
   enabled: boolean;
@@ -22,7 +44,7 @@ export interface CoworkConfig {
     auto_promote_after: number;
     auto_promote_accuracy: number;
     auto_demote_after: number;
-    decay_rate: number;
+    decay_per_day: number;
     autonomous_threshold: number;
   };
   authority: {
@@ -56,10 +78,12 @@ export interface CoworkConfig {
    * Leave empty (or omit) for open/demo mode — all agent_ids are accepted.
    */
   agents?: AgentConfig[];
+  policies?: PolicyConfig[];
+  mappings?: MappingConfig[];
 }
 
 const DEFAULT_CONFIG: CoworkConfig = {
-  trust: { default_level: 0.3, auto_promote_after: 20, auto_promote_accuracy: 0.8, auto_demote_after: 3, decay_rate: 0.01, autonomous_threshold: 0.7 },
+  trust: { default_level: 0.3, auto_promote_after: 20, auto_promote_accuracy: 0.8, auto_demote_after: 3, decay_per_day: 0.01, autonomous_threshold: 0.7 },
   authority: { default_mode: "suggest", volume_cap: 50, high_risk_fields: ["deal_stage", "owner", "commission", "utm_*", "billing_*"] },
   handoff: { context_format: "structured", include_reasoning: true, include_confidence: true, include_attempted: true, timeout_seconds: 3600 },
   feedback: { override_requires_reason: true, reason_types: ["agent_wrong", "human_preference", "missing_context", "policy_change"], override_trust_impact: -0.05, approval_trust_impact: 0.02 },

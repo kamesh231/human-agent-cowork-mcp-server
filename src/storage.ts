@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "crypto";
+import type { CoworkConfig } from "./config.js";
 
 export interface TrustScore {
   agent_id: string; domain: string; score: number; accuracy: number;
@@ -30,6 +31,9 @@ export interface Handoff {
   confidence_at_handoff: number; context_packet: any;
   attempted_actions: string[]; resolution: string | null;
   resolved_at: string | null; created_at: string;
+  instructions: string | null;
+  hand_back: boolean;
+  instructions_read: boolean;
 }
 
 export interface TimelineEvent {
@@ -40,7 +44,7 @@ export interface TimelineEvent {
 export class CoworkStore {
   private db: Database.Database;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, private readonly config?: CoworkConfig) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = FULL");
@@ -127,6 +131,10 @@ export class CoworkStore {
       CREATE INDEX IF NOT EXISTS idx_handoffs_resolved ON handoffs(resolved_at);
       CREATE INDEX IF NOT EXISTS idx_timeline_session ON timeline(session_id);
     `);
+    // Migrations for existing databases
+    try { this.db.exec("ALTER TABLE handoffs ADD COLUMN instructions TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE handoffs ADD COLUMN hand_back INTEGER NOT NULL DEFAULT 0"); } catch {}
+    try { this.db.exec("ALTER TABLE handoffs ADD COLUMN instructions_read INTEGER NOT NULL DEFAULT 0"); } catch {}
   }
 
   private now(): string { return new Date().toISOString(); }
@@ -145,6 +153,16 @@ export class CoworkStore {
         "INSERT INTO trust_scores (agent_id, domain, score, accuracy, total_actions, approved_actions, overridden_actions, consecutive_overrides, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, 0, ?)"
       ).run(agentId, domain, defaultLevel, now);
       t = this.getTrust(agentId, domain)!;
+    }
+    // Apply time-based decay
+    const decayPerDay = this.config?.trust?.decay_per_day ?? 0.01;
+    const daysSince = (Date.now() - new Date(t.last_updated).getTime()) / (1000 * 86400);
+    const decayAmount = daysSince * decayPerDay;
+    if (decayAmount > 0.001) {
+      const newScore = Math.max(0.1, t.score - decayAmount);
+      this.db.prepare("UPDATE trust_scores SET score = ?, last_updated = ? WHERE agent_id = ? AND domain = ?")
+        .run(newScore, new Date().toISOString(), agentId, domain);
+      t = { ...t, score: newScore };
     }
     return t;
   }
@@ -229,22 +247,61 @@ export class CoworkStore {
     const id = this.uuid();
     const created_at = this.now();
     this.db.prepare(
-      "INSERT INTO handoffs (id, agent_id, domain, reason, confidence_at_handoff, context_packet, attempted_actions, resolution, resolved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run(id, h.agent_id, h.domain, h.reason, h.confidence_at_handoff, JSON.stringify(h.context_packet), JSON.stringify(h.attempted_actions), h.resolution, h.resolved_at, created_at);
+      "INSERT INTO handoffs (id, agent_id, domain, reason, confidence_at_handoff, context_packet, attempted_actions, resolution, resolved_at, instructions, hand_back, instructions_read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(id, h.agent_id, h.domain, h.reason, h.confidence_at_handoff, JSON.stringify(h.context_packet), JSON.stringify(h.attempted_actions), h.resolution, h.resolved_at, h.instructions ?? null, h.hand_back ? 1 : 0, h.instructions_read ? 1 : 0, created_at);
     return { ...h, id, created_at };
+  }
+
+  private mapHandoffRow(r: any): Handoff {
+    return {
+      ...r,
+      context_packet: JSON.parse(r.context_packet),
+      attempted_actions: JSON.parse(r.attempted_actions),
+      hand_back: !!r.hand_back,
+      instructions_read: !!r.instructions_read,
+      instructions: r.instructions ?? null,
+    };
   }
 
   getOpenHandoffs(): Handoff[] {
     const rows = this.db.prepare("SELECT * FROM handoffs WHERE resolved_at IS NULL").all() as any[];
-    return rows.map(r => ({ ...r, context_packet: JSON.parse(r.context_packet), attempted_actions: JSON.parse(r.attempted_actions) }));
+    return rows.map(r => this.mapHandoffRow(r));
   }
 
-  resolveHandoff(id: string, resolution: string): Handoff {
+  resolveHandoff(id: string, resolution: string, instructions?: string, handBack?: boolean): Handoff {
     const now = this.now();
-    const info = this.db.prepare("UPDATE handoffs SET resolution=?, resolved_at=? WHERE id=?").run(resolution, now, id);
+    const info = this.db.prepare(
+      "UPDATE handoffs SET resolution=?, resolved_at=?, instructions=?, hand_back=? WHERE id=?"
+    ).run(resolution, now, instructions ?? null, handBack ? 1 : 0, id);
     if (info.changes === 0) throw new Error(`Handoff ${id} not found`);
     const row = this.db.prepare("SELECT * FROM handoffs WHERE id=?").get(id) as any;
-    return { ...row, context_packet: JSON.parse(row.context_packet), attempted_actions: JSON.parse(row.attempted_actions) };
+    return this.mapHandoffRow(row);
+  }
+
+  getProposalCountLastHour(agentId: string, domain: string): number {
+    const cutoff = new Date(Date.now() - 3600 * 1000).toISOString();
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as c FROM actions WHERE agent_id = ? AND domain = ? AND action_type = 'propose' AND created_at >= ?"
+    ).get(agentId, domain, cutoff) as any;
+    return row?.c ?? 0;
+  }
+
+  getPendingCallbacks(agentId: string, domain?: string): Handoff[] {
+    let rows: any[];
+    if (domain) {
+      rows = this.db.prepare(
+        "SELECT * FROM handoffs WHERE agent_id = ? AND resolved_at IS NOT NULL AND hand_back = 1 AND instructions_read = 0 AND domain = ?"
+      ).all(agentId, domain) as any[];
+    } else {
+      rows = this.db.prepare(
+        "SELECT * FROM handoffs WHERE agent_id = ? AND resolved_at IS NOT NULL AND hand_back = 1 AND instructions_read = 0"
+      ).all(agentId) as any[];
+    }
+    return rows.map(r => this.mapHandoffRow(r));
+  }
+
+  markCallbackRead(handoffId: string): void {
+    this.db.prepare("UPDATE handoffs SET instructions_read = 1 WHERE id = ?").run(handoffId);
   }
 
   // ─── Timeline ───────────────────────

@@ -2,6 +2,17 @@ import type { CoworkConfig } from "./config.js";
 import type { CoworkStore, TrustScore, Action, Proposal, Override } from "./storage.js";
 
 // ---------------------------------------------------------------------------
+// VolumeCapError
+// ---------------------------------------------------------------------------
+
+export class VolumeCapError extends Error {
+  constructor(message: string, public readonly cap: number, public readonly current: number) {
+    super(message);
+    this.name = "VolumeCapError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------
 
@@ -98,6 +109,16 @@ export class TrustEngine {
     field?: string;
     session_id: string;
   }): ProposeResult {
+    // Volume cap check — before entering the transaction
+    const hourlyCount = this.store.getProposalCountLastHour(params.agent_id, params.domain);
+    if (hourlyCount >= this.config.authority.volume_cap) {
+      throw new VolumeCapError(
+        `Volume cap exceeded: ${hourlyCount}/${this.config.authority.volume_cap} proposals in the last hour for '${params.agent_id}' in '${params.domain}'.`,
+        this.config.authority.volume_cap,
+        hourlyCount,
+      );
+    }
+
     return this.store.transaction((): ProposeResult => {
       const trust = this.store.getOrCreateTrust(
         params.agent_id,

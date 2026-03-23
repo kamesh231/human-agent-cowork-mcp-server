@@ -107,6 +107,86 @@ agents:
 # COWORK_SALES_AGENT_TOKEN="sk-cowork-3619387ed0e6fff5aae38f66c2a4e079f4f4e29edf8b883c"
 # COWORK_SUPPORT_AGENT_TOKEN="sk-cowork-..."
 
+# ─── Policies ─────────────────────────────────────────────────────────────────
+# Named rule sets. Defined ONCE here and referenced by ID in mappings below.
+# Two agents can share one policy. One agent can use different policies in
+# different domains. Rules are never duplicated.
+#
+# Constraint types:
+#   high_risk    — field always requires human review, regardless of trust
+#   readonly     — field cannot be modified at all (hard stop)
+#   value_range  — numeric value must fall within min/max
+#   enum         — value must be one of the listed options
+#   regex        — value must match the pattern
+#
+policies:
+  - id: "crm-write-policy"
+    description: "Standard write access for CRM fields"
+    rules:
+      - field: "deal_stage"
+        constraint: "high_risk"          # always requires human review
+      - field: "owner"
+        constraint: "high_risk"
+      - field: "commission"
+        constraint: "readonly"
+        reason: "Finance team only — use billing workflow instead"
+      - field: "amount"
+        constraint: "value_range"
+        min: 0
+        max: 500000
+      - field: "utm_*"
+        constraint: "readonly"
+        reason: "Marketing attribution — never overwrite"
+
+  - id: "support-write-policy"
+    description: "Write access for support ticket fields"
+    rules:
+      - field: "priority"
+        constraint: "enum"
+        values: ["low", "medium", "high", "critical"]
+      - field: "assigned_to"
+        constraint: "high_risk"          # escalate before reassigning
+      - field: "billing_*"
+        constraint: "readonly"
+        reason: "Billing fields require finance approval"
+      - field: "status"
+        constraint: "enum"
+        values: ["open", "in_progress", "pending_customer", "resolved", "closed"]
+
+# ─── Mappings ─────────────────────────────────────────────────────────────────
+# Explicit three-way join: who × where × which rules.
+#
+# Rules:
+#   • An agent can only operate in domains listed here (no mapping = blocked)
+#   • If no mapping exists, the proposal is escalated to a human for permission
+#   • One agent can map to multiple domains (different policy per domain)
+#   • Multiple agents can reference the same policy_id (shared rule set)
+#   • Global authority.high_risk_fields always apply on top of mapped policy rules
+#
+# Example relationships demonstrated below:
+#   sales-agent  + crm.deals      → crm-write-policy  (direct domain match)
+#   support-agent + crm.deals     → crm-write-policy  (2 agents → 1 policy)
+#   sales-agent  + support.tickets → support-write-policy (1 agent → 2 policies)
+#
+mappings:
+  - agent_id: "sales-agent"
+    domain: "crm.deals"
+    policy_id: "crm-write-policy"
+
+  - agent_id: "support-agent"
+    domain: "support.tickets"
+    policy_id: "support-write-policy"
+
+  # Demonstrates: 2 agents sharing 1 policy in the same domain
+  - agent_id: "support-agent"
+    domain: "crm.deals"
+    policy_id: "crm-write-policy"      # support-agent uses the same CRM rules as sales-agent
+
+  # Demonstrates: 1 agent accessing a second domain with a different policy
+  - agent_id: "sales-agent"
+    domain: "support.tickets"
+    policy_id: "support-write-policy"  # sales-agent in support scope gets support rules
+
 sentry:
   # Action Attribution proxy — the "AI Flight Recorder".
   # When enabled, wraps a downstream MCP server and logs every tool call

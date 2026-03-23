@@ -5,14 +5,14 @@ import { z } from "zod";
 import { CoworkStore } from "./storage.js";
 import { loadConfig } from "./config.js";
 import { AgentRegistry, AuthError } from "./auth.js";
-import { TrustEngine } from "./trust.js";
+import { TrustEngine, VolumeCapError } from "./trust.js";
 import { PolicyEngine } from "./policy.js";
 import { NotificationDispatcher } from "./notify.js";
 import { BulkDecisionEngine } from "./bulk-decision.js";
 import { AuditLinker } from "./audit.js";
 
 const config  = loadConfig();
-const store   = new CoworkStore(config.storage?.path ?? "./cowork.db");
+const store   = new CoworkStore(config.storage?.path ?? "./cowork.db", config);
 const registry = new AgentRegistry(config);
 const trust   = new TrustEngine(store, config);
 const policy  = new PolicyEngine(store, config);
@@ -63,90 +63,111 @@ server.registerTool("cowork_propose", {
   let changeObj: unknown;
   try { changeObj = JSON.parse(proposed_change); } catch { changeObj = { raw: proposed_change }; }
 
-  // Validate against policies
-  let policyViolations: any[] = [];
-  if (field && changeObj && typeof changeObj === "object" && "value" in changeObj) {
-    policyViolations = policy.validate({
-      domain, field,
-      proposed_value: (changeObj as any).value,
-      agent_id,
-    });
-  }
+  // Validate against policies using the new mapping-aware method
+  const proposedValue = (changeObj && typeof changeObj === "object" && "value" in changeObj)
+    ? (changeObj as any).value
+    : undefined;
+
+  const validationResult = policy.validateWithMapping({
+    agent_id,
+    domain,
+    field: field ?? "",
+    proposed_value: proposedValue,
+  });
 
   // Hard-stop violations block the proposal
-  const hardStops = policyViolations.filter((v) => v.severity === "hard_stop");
-  if (hardStops.length > 0) {
+  if (validationResult.hard_stops.length > 0) {
     return {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
           error: true,
           policy_error: true,
-          violations: hardStops.map((v) => ({ rule_id: v.rule_id, reason: v.reason })),
-          message: `Proposal blocked by ${hardStops.length} hard-stop policy violation(s)`,
+          violations: validationResult.hard_stops.map((v) => ({ rule_id: v.rule_id, reason: v.reason })),
+          message: `Proposal blocked by ${validationResult.hard_stops.length} hard-stop policy violation(s)`,
         }, null, 2),
       }],
     };
   }
 
-  const result = trust.atomicPropose({
-    agent_id, domain, action, target,
-    proposed_change: changeObj,
-    confidence, reasoning, field,
-    session_id: SESSION_ID,
-  });
+  try {
+    const hourlyCount = store.getProposalCountLastHour(agent_id, domain);
 
-  const { mode, proposal, actionRec } = result;
-  const currentTrust = result.trust.score;
-
-  // Record in audit trail
-  audit.recordProposal({
-    proposal_id: proposal.id,
-    agent_id,
-    domain,
-    action,
-  });
-
-  // Send notification if in suggest mode
-  if (mode === "suggest") {
-    await notify.onProposalCreated({
-      id: proposal.id,
-      action_id: actionRec.id,
-      trust_at_proposal: currentTrust,
+    const result = trust.atomicPropose({
+      agent_id, domain, action, target,
+      proposed_change: changeObj,
+      confidence, reasoning, field,
+      session_id: SESSION_ID,
     });
-  }
 
-  // Warn about policy violations (non-blocking)
-  if (policyViolations.length > 0) {
-    await notify.onPolicyViolation({
+    const { mode, proposal, actionRec } = result;
+    const currentTrust = result.trust.score;
+
+    // Record in audit trail
+    audit.recordProposal({
+      proposal_id: proposal.id,
       agent_id,
       domain,
-      field: field || "unknown",
-      rule_id: policyViolations[0].rule_id,
-      severity: "warning",
+      action,
     });
+
+    // Send notification if in suggest mode
+    if (mode === "suggest") {
+      await notify.onProposalCreated({
+        id: proposal.id,
+        action_id: actionRec.id,
+        trust_at_proposal: currentTrust,
+      });
+    }
+
+    // Warn about policy violations (non-blocking)
+    if (validationResult.violations.length > 0) {
+      await notify.onPolicyViolation({
+        agent_id,
+        domain,
+        field: field || "unknown",
+        rule_id: validationResult.violations[0].rule_id,
+        severity: "warning",
+      });
+    }
+
+    const msg =
+      mode === "act"      ? `AUTO-APPROVED: Trust (${currentTrust.toFixed(2)}) sufficient.` :
+      mode === "suggest"  ? `AWAITING REVIEW: Proposal ${proposal.id}` :
+                            `ESCALATED: Trust (${currentTrust.toFixed(2)}) too low. Proposal ${proposal.id}`;
+
+    const response: Record<string, unknown> = {
+      proposal_id:    proposal.id,
+      action_id:      actionRec.id,
+      mode,
+      trust_level:    currentTrust,
+      confidence,
+      high_risk_field: field ? trust.isHighRisk(field) : false,
+      policy_warnings: validationResult.violations.filter((v) => v.severity === "warning").length,
+      policy_id: validationResult.policy_id,
+      policy_description: validationResult.policy_description,
+      policy_rules_checked: validationResult.rules_checked,
+      mapping_found: validationResult.mapping_found,
+      volume_remaining: config.authority.volume_cap - hourlyCount,
+      volume_cap: config.authority.volume_cap,
+      message: msg,
+    };
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify(response, null, 2),
+      }],
+    };
+  } catch (e) {
+    if (e instanceof VolumeCapError) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({
+        error: true, volume_cap_error: true,
+        message: e.message, volume_cap: e.cap, proposals_this_hour: e.current,
+      }, null, 2) }] };
+    }
+    throw e;
   }
-
-  const msg =
-    mode === "act"      ? `✅ AUTO-APPROVED: Trust (${currentTrust.toFixed(2)}) sufficient.` :
-    mode === "suggest"  ? `⏳ AWAITING REVIEW: Proposal ${proposal.id}` :
-                          `🚨 ESCALATED: Trust (${currentTrust.toFixed(2)}) too low. Proposal ${proposal.id}`;
-
-  return {
-    content: [{
-      type: "text" as const,
-      text: JSON.stringify({
-        proposal_id:    proposal.id,
-        action_id:      actionRec.id,
-        mode,
-        trust_level:    currentTrust,
-        confidence,
-        high_risk_field: field ? trust.isHighRisk(field) : false,
-        policy_warnings: policyViolations.filter((v) => v.severity === "warning").length,
-        message: msg,
-      }, null, 2),
-    }],
-  };
 });
 
 // ─── Tool 2: cowork_check_trust ──────────────────────────────────────────────
@@ -216,6 +237,7 @@ server.registerTool("cowork_handoff", {
     context_packet: { mode: handoff_mode, reason, confidence, attempted: attempts, context: ctx },
     attempted_actions: attempts,
     resolution: null, resolved_at: null,
+    instructions: null, hand_back: false, instructions_read: false,
   });
   store.addAction({
     agent_id, action_type: "escalate", domain,
@@ -418,25 +440,27 @@ server.registerTool("cowork_resolve_handoff", {
     handoff_id:         z.string().describe("ID of the handoff to resolve"),
     resolution:         z.string().describe("What the human did or decided"),
     hand_back_to_agent: z.boolean().optional().describe("Whether to delegate back to the agent"),
-    instructions:       z.string().optional().describe("Instructions for the agent if handing back"),
+    instructions:       z.string().optional().describe("Instructions for agent when handing back"),
+    hand_back:          z.boolean().optional().default(false).describe("Hand work back to agent with instructions"),
   },
-}, async ({ handoff_id, resolution, hand_back_to_agent, instructions }) => {
+}, async ({ handoff_id, resolution, hand_back_to_agent, instructions, hand_back }) => {
+  const shouldHandBack = hand_back || hand_back_to_agent;
   try {
-    store.resolveHandoff(handoff_id, resolution);
+    store.resolveHandoff(handoff_id, resolution, instructions, shouldHandBack);
     store.addTimelineEvent({
       session_id: SESSION_ID, actor: "human", event_type: "handoff",
       reference_id: handoff_id,
-      summary: `Resolved handoff: ${resolution}${hand_back_to_agent ? " [HANDED BACK]" : ""}`,
+      summary: `Resolved handoff: ${resolution}${shouldHandBack ? " [HANDED BACK]" : ""}`,
     });
 
     const result: Record<string, unknown> = {
       handoff_id, resolved: true, resolution,
-      message: `🤝 RESOLVED: ${resolution}`,
+      message: `RESOLVED: ${resolution}`,
     };
-    if (hand_back_to_agent && instructions) {
+    if (shouldHandBack && instructions) {
       result.hand_back   = true;
       result.instructions = instructions;
-      result.message = `🤝 RESOLVED & HANDED BACK: ${resolution}\n📋 Instructions: ${instructions}`;
+      result.message = `RESOLVED & HANDED BACK: ${resolution}\nInstructions: ${instructions}`;
     }
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch {
@@ -760,6 +784,48 @@ server.registerTool("cowork_governance_report", {
   };
 });
 
+// ─── Tool 14: cowork_check_handoff ───────────────────────────────────────────
+server.registerTool("cowork_check_handoff", {
+  title: "Check for handoff callbacks (COWORK: Handoff Callback)",
+  description:
+    "Agent polls for resolved handoffs with human instructions. " +
+    "Closes the loop: human resolves with hand_back=true → agent picks up and continues.",
+  inputSchema: {
+    agent_id:    z.string().describe("Agent identifier"),
+    agent_token: z.string().optional().describe("Agent auth token"),
+    domain:      z.string().optional().describe("Filter by domain (optional)"),
+  },
+}, async ({ agent_id, agent_token, domain }) => {
+  try { verifyAgent(agent_id, agent_token); }
+  catch (e) { return authErrorResponse(e as AuthError); }
+
+  const callbacks = store.getPendingCallbacks(agent_id, domain);
+  for (const cb of callbacks) {
+    store.markCallbackRead(cb.id);
+  }
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        pending_instructions: callbacks.map(h => ({
+          handoff_id: h.id,
+          domain: h.domain,
+          resolved_at: h.resolved_at,
+          resolution: h.resolution,
+          instructions: h.instructions,
+          hand_back: h.hand_back,
+          original_reason: h.reason,
+        })),
+        count: callbacks.length,
+        message: callbacks.length > 0
+          ? `${callbacks.length} resolved handoff(s) with instructions ready for ${agent_id}`
+          : `No pending instructions for ${agent_id}`,
+      }, null, 2),
+    }],
+  };
+});
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();
@@ -767,7 +833,7 @@ async function main() {
   const authStatus = registry.isOpenMode()
     ? "open mode (demo)"
     : `closed mode (${registry.size()} agents)`;
-  console.error("🤝 COWORK MCP Server v0.1.0 started");
+  console.error("COWORK MCP Server v0.1.1 started (14 tools)");
   console.error(`   Auth: ${authStatus} | Mode: ${config.authority.default_mode} | Trust default: ${config.trust.default_level}`);
 }
 main().catch((e) => { console.error("Fatal:", e); process.exit(1); });
