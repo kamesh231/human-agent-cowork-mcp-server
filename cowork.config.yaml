@@ -80,17 +80,32 @@ storage:
 # Leave commented out (or empty) for open/demo mode.
 #
 # Generating a token:
-#   node -e "const {generateToken, hashToken} = await import('./build/auth.js');
+#   node -e "const {generateToken, hashToken} = require('./build/auth.js');
 #             const t = generateToken(); console.log('token:', t);
-#             console.log('token_hash:', hashToken(t));"
+#             console.log('hash:', hashToken(t));"
 #
+# DEV/DEMO MODE (plaintext token in config):
+agents:
+  - id: "sales-agent"
+    token: "sk-cowork-3619387ed0e6fff5aae38f66c2a4e079f4f4e29edf8b883c"
+
+  - id: "support-agent"
+    token: "sk-cowork-REPLACE_WITH_GENERATED_TOKEN"
+
+# PRODUCTION MODE (token_hash in config, plaintext in .env):
+# Uncomment this section and comment out the above for production
 # agents:
 #   - id: "sales-agent"
-#     token: "sk-cowork-..."          # plaintext — dev/demo only
+#     token_hash: "d03f462b83c1b6121e9e97662456dc63a57ac1ec676045660591fa1d3e059b11"
+#     workspace_id: "acme-corp"
 #
 #   - id: "support-agent"
-#     token_hash: "sha256-hex-..."    # hashed — production
-#     workspace_id: "acme-corp"       # optional namespace (future multi-tenancy)
+#     token_hash: "sha256-hex-of-generated-token"
+#     workspace_id: "acme-corp"
+#
+# Then store plaintext tokens in .env:
+# COWORK_SALES_AGENT_TOKEN="sk-cowork-3619387ed0e6fff5aae38f66c2a4e079f4f4e29edf8b883c"
+# COWORK_SUPPORT_AGENT_TOKEN="sk-cowork-..."
 
 sentry:
   # Action Attribution proxy — the "AI Flight Recorder".
