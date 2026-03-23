@@ -1,5 +1,65 @@
+# Dependencies
 node_modules/
+package-lock.json
+
+# Build output
 build/
+dist/
 *.js.map
+*.d.ts.map
+
+# Runtime data & databases
+cowork.db
+cowork.db-shm
+cowork.db-wal
+cowork-traces.db
+cowork-traces.db-shm
+cowork-traces.db-wal
 cowork-data.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.sublime-workspace
+*.sublime-project
+
+# Claude Code workspace
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Node-gyp build artifacts
+build/Release
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# OS-specific
+*.pid
